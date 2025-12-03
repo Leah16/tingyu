@@ -23,11 +23,14 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
 
     musicLib: {
         getLibrary: () => ipcRenderer.invoke('get-library'),
-        saveTrack: (track: any) => ipcRenderer.invoke('save-track', track),
+        saveTrack: (track: any, playlist?: string) => ipcRenderer.invoke('save-track', track, playlist),
         deleteTrack: (id: string) => ipcRenderer.invoke('delete-track', id),
         updateLibrary: (tracks: any[]) => ipcRenderer.invoke('update-library', tracks),
         selectMusicFiles: () => ipcRenderer.invoke('select-music-files'),
-        getFileSize: (path: string) => ipcRenderer.invoke('get-file-size', path)
+        getFileSize: (path: string) => ipcRenderer.invoke('get-file-size', path),
+        getPlaylists: () => ipcRenderer.invoke('get-playlists'),
+        createPlaylist: (name: string) => ipcRenderer.invoke('create-playlist', name),
+        deletePlaylist: (name: string) => ipcRenderer.invoke('delete-playlist', name)
     },
 
     windowControls: {

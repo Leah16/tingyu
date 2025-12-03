@@ -48,20 +48,20 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
         <div className="relative flex flex-col items-center justify-center h-16 w-full">
           {/* Technical Info */}
           <div className={`absolute inset-0 flex flex-col items-center justify-center transition-all duration-500 transform ${showInfo ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'}`}>
-            <div className="text-stone-500 text-[10px] tracking-[0.4em] uppercase">
+            <div className="text-stone-500 text-[10px] tracking-[0.4em] uppercase h-4 flex items-center">
               Track Info
             </div>
-            <div className="text-stone-300 text-sm font-light tracking-widest mt-1 font-mono opacity-80">
+            <div className="text-stone-300 text-sm font-light tracking-widest mt-2 font-mono opacity-80 h-6 flex items-center">
               {bitrate ? `${bitrate}kbps` : '---'} • {sampleRate ? `${sampleRate}Hz` : '---'}
             </div>
           </div>
 
           {/* Standard Info */}
-          <div className={`absolute inset-0 flex flex-col items-center justify-center space-y-2 transition-all duration-500 transform ${!showInfo ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'}`}>
-            <div className="text-stone-500 text-[10px] tracking-[0.4em] uppercase">
+          <div className={`absolute inset-0 flex flex-col items-center justify-center transition-all duration-500 transform ${!showInfo ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'}`}>
+            <div className="text-stone-500 text-[10px] tracking-[0.4em] uppercase h-4 flex items-center">
               Now Playing {bpm > 0 && `• ${bpm} BPM`}
             </div>
-            <div className="text-stone-200 text-lg font-light tracking-widest text-center opacity-90 font-serif max-w-[80vw] truncate">
+            <div className="text-stone-200 text-lg font-light tracking-widest text-center opacity-90 font-serif max-w-[80vw] truncate mt-2 h-6 flex items-center justify-center">
               {fileName}
             </div>
           </div>

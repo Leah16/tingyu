@@ -10,7 +10,11 @@ import { detectBPM } from './utils/bpm';
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
-  const [playlist, setPlaylist] = useState<Track[]>([]);
+  const [allTracks, setAllTracks] = useState<Track[]>([]); // Store all tracks
+  const [playlist, setPlaylist] = useState<Track[]>([]); // Current playing queue
+  const [playlists, setPlaylists] = useState<string[]>(['Default']);
+  const [currentPlaylist, setCurrentPlaylist] = useState<string>('Default'); // Name of the playing playlist
+  const [viewedPlaylistName, setViewedPlaylistName] = useState<string>('Default'); // Name of the playlist currently being viewed
   const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(-1);
   const [analysis, setAnalysis] = useState<AudioAnalysis>({ intensity: 0, bass: 0, mid: 0, treble: 0 });
   const [isPlaying, setIsPlaying] = useState(false);
@@ -75,12 +79,13 @@ const App: React.FC = () => {
         name: fileName.replace(/\.[^/.]+$/, ""),
         path: filePath,
         bpm: bpm
-      });
+      }, currentPlaylist);
       console.log('Track saved:', savedTrack);
 
       newTrack = {
         ...savedTrack,
-        url: `media://${savedTrack.fileName}`
+        url: `media://${savedTrack.fileName}`,
+        playlist: currentPlaylist
       };
     } else {
       // Fallback for browser
@@ -93,6 +98,7 @@ const App: React.FC = () => {
       };
     }
 
+    setAllTracks(prev => [...prev, newTrack]);
     setPlaylist(prev => [...prev, newTrack]);
     // If this is the first track, start playing
     if (playlist.length === 0) {
@@ -107,6 +113,11 @@ const App: React.FC = () => {
       console.log('Checking for Electron environment:', !!window.ipcRenderer);
       if (window.ipcRenderer) {
         try {
+          // Load playlists
+          const loadedPlaylists = await window.ipcRenderer.musicLib.getPlaylists();
+          setPlaylists(loadedPlaylists);
+
+          // Load tracks
           const library = await window.ipcRenderer.musicLib.getLibrary();
           console.log('Loaded library:', library);
           if (library.length > 0) {
@@ -117,13 +128,20 @@ const App: React.FC = () => {
               artist: t.artist,
               addedAt: t.addedAt,
               fileName: t.fileName,
+              playlist: t.playlist || 'Default',
               url: `media://${t.fileName}`
             }));
             console.log('Converted tracks:', tracks);
-            setPlaylist(tracks);
-            setCurrentTrackIndex(0);
-            // Trigger processing to setup audio engine and show controls
-            setAppState(AppState.PROCESSING);
+            setAllTracks(tracks);
+
+            // Filter for default playlist initially
+            const defaultTracks = tracks.filter(t => t.playlist === 'Default' || !t.playlist);
+            setPlaylist(defaultTracks);
+
+            if (defaultTracks.length > 0) {
+              setCurrentTrackIndex(0);
+              setAppState(AppState.PROCESSING);
+            }
           }
         } catch (e) {
           console.error('Failed to load library:', e);
@@ -135,19 +153,74 @@ const App: React.FC = () => {
     loadLibrary();
   }, []);
 
+  const handleSwitchPlaylist = (name: string) => {
+    setViewedPlaylistName(name);
+  };
+
+  const handleCreatePlaylist = async (name: string) => {
+    if (window.ipcRenderer) {
+      const success = await window.ipcRenderer.musicLib.createPlaylist(name);
+      if (success) {
+        setPlaylists(prev => [...prev, name]);
+        setViewedPlaylistName(name);
+      }
+    }
+  };
+
+  const handleDeletePlaylist = async (name: string) => {
+    if (name === 'Default') return;
+    if (confirm(`Delete playlist "${name}" and all its songs?`)) {
+      if (window.ipcRenderer) {
+        const success = await window.ipcRenderer.musicLib.deletePlaylist(name);
+        if (success) {
+          setPlaylists(prev => prev.filter(p => p !== name));
+
+          // Remove tracks from allTracks
+          const newAllTracks = allTracks.filter(t => t.playlist !== name);
+          setAllTracks(newAllTracks);
+
+          // If we were viewing this playlist, switch view to Default
+          if (viewedPlaylistName === name) {
+            setViewedPlaylistName('Default');
+          }
+
+          // If we were playing this playlist, stop and switch to Default
+          if (currentPlaylist === name) {
+            setCurrentPlaylist('Default');
+            const defaultTracks = newAllTracks.filter(t => (t.playlist || 'Default') === 'Default');
+            setPlaylist(defaultTracks);
+            setCurrentTrackIndex(-1);
+            setAppState(AppState.IDLE);
+            setIsPlaying(false);
+            if (audioElRef.current) audioElRef.current.pause();
+          }
+        }
+      }
+    }
+  };
+
   const handleReupload = () => {
     if (audioElRef.current) {
       audioElRef.current.pause();
       setIsPlaying(false);
     }
-    setPlaylist([]);
-    setCurrentTrackIndex(-1);
-    setAppState(AppState.IDLE);
-    setAnalysis({ intensity: 0, bass: 0, mid: 0, treble: 0 });
-    setIsPlaylistOpen(false);
+
+    // Update allTracks and persist
+    const newAllTracks = allTracks.filter(t => (t.playlist || 'Default') !== viewedPlaylistName);
+    setAllTracks(newAllTracks);
+
+    // If we cleared the playing playlist, update active state
+    if (viewedPlaylistName === currentPlaylist) {
+      setPlaylist([]);
+      setCurrentTrackIndex(-1);
+      setAppState(AppState.IDLE);
+      setAnalysis({ intensity: 0, bass: 0, mid: 0, treble: 0 });
+      setIsPlaying(false);
+      if (audioElRef.current) audioElRef.current.pause();
+    }
 
     if (window.ipcRenderer) {
-      window.ipcRenderer.musicLib.updateLibrary([]);
+      window.ipcRenderer.musicLib.updateLibrary(newAllTracks);
     }
   };
 
@@ -232,16 +305,19 @@ const App: React.FC = () => {
           format,
           size,
           sampleRate,
-          bitrate
-        });
-        newTracks.push({
+          bitrate,
+          playlist: viewedPlaylistName
+        }, currentPlaylist);
+
+        const trackWithUrl = {
           ...savedTrack,
           url: `media://${savedTrack.fileName}`,
           format,
           size,
           sampleRate,
-          bitrate
-        });
+          bitrate,
+          playlist: viewedPlaylistName
+        };
       } else if (typeof f !== 'string') {
         newTracks.push({
           id: tempId,
@@ -252,40 +328,56 @@ const App: React.FC = () => {
           format,
           size,
           sampleRate,
-          bitrate
+          bitrate,
+          playlist: viewedPlaylistName
         });
       }
     }
-    setPlaylist(prev => [...prev, ...newTracks]);
+    setAllTracks(prev => [...prev, ...newTracks]);
+
+    // Only update playing queue if we are adding to the currently playing playlist
+    if (viewedPlaylistName === currentPlaylist) {
+      setPlaylist(prev => [...prev, ...newTracks]);
+    }
   };
 
   const handleRemoveTrack = (e: React.MouseEvent, index: number) => {
     e.stopPropagation();
-    if (index === currentTrackIndex) {
-      // If removing current track
-      if (playlist.length === 1) {
-        handleReupload();
-        return;
-      } else {
-        // If it's the last one, go back; otherwise stay at same index (which becomes next song)
-        if (index === playlist.length - 1) {
-          setCurrentTrackIndex(index - 1);
+
+    // Get the track from the VIEWED list
+    const viewedTracks = allTracks.filter(t => (t.playlist || 'Default') === viewedPlaylistName);
+    const trackToRemove = viewedTracks[index];
+
+    if (!trackToRemove) return;
+
+    // If we are removing from the CURRENTLY PLAYING playlist, handle playback state
+    if (viewedPlaylistName === currentPlaylist) {
+      if (index === currentTrackIndex) {
+        // If removing current track
+        if (playlist.length === 1) {
+          handleReupload(); // This clears everything
+          return;
         } else {
-          // We need to force a re-load if the index doesn't change but the song does.
-          // Setting processing state will trigger the effect.
-          setAppState(AppState.PROCESSING);
+          if (index === playlist.length - 1) {
+            setCurrentTrackIndex(index - 1);
+          } else {
+            setAppState(AppState.PROCESSING);
+          }
         }
+      } else if (index < currentTrackIndex) {
+        setCurrentTrackIndex(prev => prev - 1);
       }
-    } else if (index < currentTrackIndex) {
-      // Shift index if we removed a track before current
-      setCurrentTrackIndex(prev => prev - 1);
+
+      const newPlaylist = playlist.filter(t => t.id !== trackToRemove.id);
+      setPlaylist(newPlaylist);
     }
 
-    const newPlaylist = playlist.filter((_, i) => i !== index);
-    setPlaylist(newPlaylist);
+    // Update allTracks
+    setAllTracks(prev => prev.filter(t => t.id !== trackToRemove.id));
 
     if (window.ipcRenderer) {
-      window.ipcRenderer.musicLib.updateLibrary(newPlaylist);
+      const newAllTracks = allTracks.filter(t => t.id !== trackToRemove.id);
+      window.ipcRenderer.musicLib.updateLibrary(newAllTracks);
     }
   };
 
@@ -304,40 +396,59 @@ const App: React.FC = () => {
   };
 
   const handleSelectTrack = (index: number) => {
-    if (index !== currentTrackIndex) {
+    if (viewedPlaylistName !== currentPlaylist) {
+      // Switch context: User clicked a track in a different playlist than the one playing
+      const newQueue = allTracks.filter(t => (t.playlist || 'Default') === viewedPlaylistName);
+      setPlaylist(newQueue);
+      setCurrentPlaylist(viewedPlaylistName);
       setCurrentTrackIndex(index);
       setAppState(AppState.PROCESSING);
+      setIsPlaying(true); // Ensure it starts playing
+    } else {
+      // Same context: User clicked a track in the currently playing playlist
+      if (index !== currentTrackIndex) {
+        setCurrentTrackIndex(index);
+        if (appState === AppState.IDLE) {
+          setAppState(AppState.PROCESSING);
+        }
+      }
     }
   };
 
   const handleReorder = async (fromIndex: number, toIndex: number) => {
-    if (toIndex < 0 || toIndex >= playlist.length) return;
+    const viewedTracks = allTracks.filter(t => (t.playlist || 'Default') === viewedPlaylistName);
+    if (toIndex < 0 || toIndex >= viewedTracks.length) return;
 
-    const newPlaylist = [...playlist];
-    const [movedTrack] = newPlaylist.splice(fromIndex, 1);
-    newPlaylist.splice(toIndex, 0, movedTrack);
+    const newViewedPlaylist = [...viewedTracks];
+    const [movedTrack] = newViewedPlaylist.splice(fromIndex, 1);
+    newViewedPlaylist.splice(toIndex, 0, movedTrack);
 
-    setPlaylist(newPlaylist);
+    // If we are reordering the CURRENTLY PLAYING playlist, update active state
+    if (viewedPlaylistName === currentPlaylist) {
+      setPlaylist(newViewedPlaylist);
 
-    // Update currentTrackIndex if necessary
-    if (currentTrackIndex === fromIndex) {
-      setCurrentTrackIndex(toIndex);
-    } else if (currentTrackIndex === toIndex) {
-      setCurrentTrackIndex(fromIndex); // This logic might be slightly off if moving across, but for adjacent moves it's fine.
-      // Actually, let's just find the track ID
-      const currentId = playlist[currentTrackIndex].id;
-      const newIndex = newPlaylist.findIndex(t => t.id === currentId);
-      setCurrentTrackIndex(newIndex);
-    } else {
-      // If we moved something else, we need to adjust index if it affected our position
-      const currentId = playlist[currentTrackIndex].id;
-      const newIndex = newPlaylist.findIndex(t => t.id === currentId);
-      setCurrentTrackIndex(newIndex);
+      // Update currentTrackIndex if necessary
+      if (currentTrackIndex === fromIndex) {
+        setCurrentTrackIndex(toIndex);
+      } else if (currentTrackIndex === toIndex) {
+        setCurrentTrackIndex(fromIndex);
+      } else {
+        // If we moved something else, we need to adjust index if it affected our position
+        const currentId = playlist[currentTrackIndex].id;
+        const newIndex = newViewedPlaylist.findIndex(t => t.id === currentId);
+        setCurrentTrackIndex(newIndex);
+      }
     }
+
+    // Update allTracks
+    const otherTracks = allTracks.filter(t => (t.playlist || 'Default') !== viewedPlaylistName);
+    const newAllTracks = [...otherTracks, ...newViewedPlaylist];
+
+    setAllTracks(newAllTracks);
 
     // Persist to Electron
     if (window.ipcRenderer) {
-      await window.ipcRenderer.musicLib.updateLibrary(newPlaylist);
+      await window.ipcRenderer.musicLib.updateLibrary(newAllTracks);
     }
   };
 
@@ -345,7 +456,9 @@ const App: React.FC = () => {
 
   useEffect(() => {
     // Watch for track changes trigger
-    if (appState === AppState.PROCESSING && currentTrackIndex !== -1 && playlist[currentTrackIndex]) {
+    // Watch for track changes trigger
+    // We remove AppState.PROCESSING check to allow switching while PLAYING
+    if ((appState === AppState.PROCESSING || appState === AppState.PLAYING) && currentTrackIndex !== -1 && playlist[currentTrackIndex]) {
       const track = playlist[currentTrackIndex];
 
       const playSequence = async () => {
@@ -455,7 +568,7 @@ const App: React.FC = () => {
         audioEl.addEventListener('ended', () => {
           setCurrentTrackIndex(prevIndex => {
             if (prevIndex < playlistRef.current.length - 1) {
-              setAppState(AppState.PROCESSING);
+              // setAppState(AppState.PROCESSING); // Don't reset state, just change index
               return prevIndex + 1;
             }
             setIsPlaying(false);
@@ -506,7 +619,9 @@ const App: React.FC = () => {
         try {
           await audioEl.play();
           setIsPlaying(true);
-          setAppState(AppState.PLAYING);
+          if (appState !== AppState.PLAYING) {
+            setAppState(AppState.PLAYING);
+          }
 
           // Update Media Session Metadata
           if ('mediaSession' in navigator) {
@@ -607,7 +722,7 @@ const App: React.FC = () => {
       </div>
 
       {/* Main Player Interface */}
-      {appState === AppState.PLAYING && (
+      {(appState === AppState.PLAYING || appState === AppState.PROCESSING) && (
         <>
           <PlayerControls
             onReupload={handleReupload}
@@ -627,7 +742,7 @@ const App: React.FC = () => {
           />
 
           <Playlist
-            tracks={playlist}
+            tracks={allTracks.filter(t => (t.playlist || 'Default') === viewedPlaylistName)}
             currentIndex={currentTrackIndex}
             isOpen={isPlaylistOpen}
             onClose={() => setIsPlaylistOpen(false)}
@@ -636,6 +751,12 @@ const App: React.FC = () => {
             onRemove={handleRemoveTrack}
             onReorder={handleReorder}
             onClear={handleReupload}
+            playlists={playlists}
+            viewedPlaylist={viewedPlaylistName}
+            playingPlaylist={currentPlaylist}
+            onSwitchPlaylist={handleSwitchPlaylist}
+            onCreatePlaylist={handleCreatePlaylist}
+            onDeletePlaylist={handleDeletePlaylist}
           />
 
           {/* Invisible overlay for cursor hiding logic if needed, or just interactions */}

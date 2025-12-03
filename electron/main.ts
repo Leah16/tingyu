@@ -22,9 +22,7 @@ function createWindow() {
     win = new BrowserWindow({
         width: 1200,
         height: 800,
-        frame: false, // Frameless window
-        titleBarStyle: 'hidden', // Hide default title bar
-        trafficLightPosition: { x: 20, y: 20 }, // Adjust traffic lights
+        frame: false, // Frameless window - hides all system controls
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: true,
@@ -150,6 +148,17 @@ function setupLibraryHandlers() {
             try {
                 const data = fs.readFileSync(libraryPath, 'utf-8');
                 const library = JSON.parse(data);
+
+                // Infer playlist from fileName
+                library.forEach((t: any) => {
+                    if (t.fileName && t.fileName.includes('/')) {
+                        const parts = t.fileName.split('/');
+                        t.playlist = parts[0];
+                    } else {
+                        t.playlist = 'Default';
+                    }
+                });
+
                 console.log('Library loaded:', library.length, 'tracks');
                 return library;
             } catch (e) {
@@ -161,14 +170,89 @@ function setupLibraryHandlers() {
         return [];
     });
 
-    ipcMain.handle('save-track', async (_, trackData: { id: string, name: string, path: string, bpm: number }) => {
-        console.log('IPC: save-track called', trackData);
+    ipcMain.handle('get-playlists', async () => {
+        try {
+            if (!fs.existsSync(musicDir)) return ['Default'];
+
+            const dirents = fs.readdirSync(musicDir, { withFileTypes: true });
+            const playlists = dirents
+                .filter(dirent => dirent.isDirectory())
+                .map(dirent => dirent.name);
+
+            return ['Default', ...playlists];
+        } catch (e) {
+            console.error('Failed to get playlists:', e);
+            return ['Default'];
+        }
+    });
+
+    ipcMain.handle('create-playlist', async (_, name: string) => {
+        try {
+            const playlistPath = path.join(musicDir, name);
+            if (!fs.existsSync(playlistPath)) {
+                fs.mkdirSync(playlistPath);
+                return true;
+            }
+            return false;
+        } catch (e) {
+            console.error('Failed to create playlist:', e);
+            return false;
+        }
+    });
+
+    ipcMain.handle('delete-playlist', async (_, name: string) => {
+        if (name === 'Default') return false;
+
+        try {
+            const playlistPath = path.join(musicDir, name);
+            if (fs.existsSync(playlistPath)) {
+                fs.rmSync(playlistPath, { recursive: true, force: true });
+
+                // Update library to remove tracks in this playlist
+                if (fs.existsSync(libraryPath)) {
+                    const data = fs.readFileSync(libraryPath, 'utf-8');
+                    let library = JSON.parse(data);
+                    library = library.filter((t: any) => {
+                        // Check if track is in this playlist folder
+                        if (t.fileName && t.fileName.startsWith(name + '/')) {
+                            return false;
+                        }
+                        return true;
+                    });
+                    fs.writeFileSync(libraryPath, JSON.stringify(library, null, 2));
+                }
+
+                return true;
+            }
+            return false;
+        } catch (e) {
+            console.error('Failed to delete playlist:', e);
+            return false;
+        }
+    });
+
+    ipcMain.handle('save-track', async (_, trackData: { id: string, name: string, path: string, bpm: number }, playlistName: string = 'Default') => {
+        console.log('IPC: save-track called', trackData, playlistName);
 
         // Extract file extension
         const ext = path.extname(trackData.path);
         // Use ID as filename to avoid Unicode/special character issues
         const safeFileName = `${trackData.id}${ext}`;
-        const destPath = path.join(musicDir, safeFileName);
+
+        let destPath: string;
+        let relativeFileName: string;
+
+        if (playlistName && playlistName !== 'Default') {
+            const playlistDir = path.join(musicDir, playlistName);
+            if (!fs.existsSync(playlistDir)) {
+                fs.mkdirSync(playlistDir, { recursive: true });
+            }
+            destPath = path.join(playlistDir, safeFileName);
+            relativeFileName = `${playlistName}/${safeFileName}`;
+        } else {
+            destPath = path.join(musicDir, safeFileName);
+            relativeFileName = safeFileName;
+        }
 
         // Copy file
         try {
@@ -190,8 +274,9 @@ function setupLibraryHandlers() {
         const newTrack = {
             id: trackData.id,
             name: trackData.name,
-            fileName: safeFileName, // Store the safe filename
+            fileName: relativeFileName, // Store the safe filename (with folder if applicable)
             bpm: trackData.bpm,
+            playlist: playlistName,
             addedAt: Date.now()
         }
 
@@ -213,6 +298,7 @@ function setupLibraryHandlers() {
                     fileName: t.fileName || path.basename(t.path), // Fallback if fileName missing
                     bpm: t.bpm,
                     artist: t.artist,
+                    playlist: t.playlist || 'Default', // Preserve playlist
                     addedAt: t.addedAt || Date.now()
                 }));
                 fs.writeFileSync(libraryPath, JSON.stringify(libraryToSave, null, 2));

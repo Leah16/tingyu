@@ -32,6 +32,7 @@ export interface Track {
   bpm: number;
   artist?: string;
   addedAt?: number;
+  playlist?: string; // Playlist name (folder name)
   // Metadata
   format?: string;
   bitrate?: number;
@@ -44,11 +45,14 @@ declare global {
     ipcRenderer: {
       musicLib: {
         getLibrary: () => Promise<any[]>;
-        saveTrack: (track: any) => Promise<any>;
+        saveTrack: (track: any, playlist?: string) => Promise<any>;
         deleteTrack: (id: string) => Promise<void>;
         updateLibrary: (tracks: any[]) => Promise<boolean>;
         selectMusicFiles: () => Promise<string[]>;
         getFileSize: (path: string) => Promise<number>;
+        getPlaylists: () => Promise<string[]>;
+        createPlaylist: (name: string) => Promise<boolean>;
+        deletePlaylist: (name: string) => Promise<boolean>;
       };
       windowControls: {
         minimize: () => void;
