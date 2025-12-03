@@ -18,6 +18,6 @@ or...
 npm run electron:build
 ```
 
-## 📄 许可证
+许可证
 
 [MIT](LICENSE)
