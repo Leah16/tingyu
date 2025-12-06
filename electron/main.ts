@@ -10,6 +10,19 @@ process.env.DIST = path.join(__dirname, '../dist')
 process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(process.env.DIST, '../public')
 
 let win: BrowserWindow | null
+let musicDir = path.join(app.getPath('userData'), 'music') // Default
+const configPath = path.join(app.getPath('userData'), 'config.json')
+
+function loadConfig() {
+    if (fs.existsSync(configPath)) {
+        try {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+            if (config.musicLibraryPath) {
+                musicDir = config.musicLibraryPath
+            }
+        } catch (e) { console.error("Config load error", e) }
+    }
+}
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
@@ -74,7 +87,9 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 app.whenReady().then(() => {
-    // Register 'media' protocol to serve files from userData/music
+    loadConfig();
+
+    // Register 'media' protocol to serve files from musicDir
     protocol.handle('media', async (request) => {
         console.log('Raw request URL:', request.url);
 
@@ -89,7 +104,7 @@ app.whenReady().then(() => {
 
             console.log('Extracted filename:', filename);
 
-            const musicPath = path.join(app.getPath('userData'), 'music', filename);
+            const musicPath = path.join(musicDir, filename);
             console.log('Resolved file path:', musicPath);
             console.log('File exists:', fs.existsSync(musicPath));
 
@@ -130,7 +145,7 @@ app.whenReady().then(() => {
 })
 
 function setupLibraryHandlers() {
-    const musicDir = path.join(app.getPath('userData'), 'music');
+    // musicDir is now a global variable
     const libraryPath = path.join(app.getPath('userData'), 'library.json');
 
     console.log('Setting up library handlers...');
@@ -360,6 +375,57 @@ function setupLibraryHandlers() {
             return 0;
         }
     })
+
+    // --- Settings / Music Path Handlers ---
+
+    ipcMain.handle('get-music-path', async () => {
+        return musicDir;
+    });
+
+    ipcMain.handle('select-music-path', async () => {
+        const result = await dialog.showOpenDialog({
+            properties: ['openDirectory', 'createDirectory']
+        });
+        if (!result.canceled && result.filePaths.length > 0) {
+            return result.filePaths[0];
+        }
+        return null;
+    });
+
+    ipcMain.handle('update-music-path', async (_, newPath: string) => {
+        console.log('Updating music path to:', newPath);
+        if (newPath === musicDir) return true;
+
+        try {
+            // 1. Create new directory if it doesn't exist
+            if (!fs.existsSync(newPath)) {
+                fs.mkdirSync(newPath, { recursive: true });
+            }
+
+            // 2. Move files (Copy then Remove)
+            // We use cpSync with recursive: true (Node 16.7+)
+            // Electron 29+ uses Node 20+, so this is safe.
+            if (fs.existsSync(musicDir)) {
+                console.log('Copying files from', musicDir, 'to', newPath);
+                fs.cpSync(musicDir, newPath, { recursive: true });
+
+                // Verify copy success implicitly by lack of error, then remove old
+                console.log('Removing old directory:', musicDir);
+                fs.rmSync(musicDir, { recursive: true, force: true });
+            }
+
+            // 3. Update Config
+            musicDir = newPath;
+            const config = { musicLibraryPath: newPath };
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+            console.log('Music path updated successfully');
+            return true;
+        } catch (e) {
+            console.error('Failed to update music path:', e);
+            return false;
+        }
+    });
 
     // Window Controls
     ipcMain.on('window-minimize', () => {

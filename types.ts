@@ -53,6 +53,9 @@ declare global {
         getPlaylists: () => Promise<string[]>;
         createPlaylist: (name: string) => Promise<boolean>;
         deletePlaylist: (name: string) => Promise<boolean>;
+        getMusicPath: () => Promise<string>;
+        selectMusicPath: () => Promise<string | null>;
+        updateMusicPath: (newPath: string) => Promise<boolean>;
       };
       windowControls: {
         minimize: () => void;

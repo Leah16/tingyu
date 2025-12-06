@@ -5,6 +5,7 @@ import RainCanvas from './components/RainCanvas';
 import PlayerControls from './components/PlayerControls';
 import Playlist from './components/Playlist';
 import TitleBar from './components/TitleBar';
+import Settings from './components/Settings';
 import { AppState, AudioAnalysis, Track } from './types';
 import { detectBPM } from './utils/bpm';
 
@@ -24,6 +25,7 @@ const App: React.FC = () => {
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isPlaylistOpen, setIsPlaylistOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Audio refs
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -454,14 +456,23 @@ const App: React.FC = () => {
 
   // --- Audio Engine ---
 
+  // Track which track is currently loaded to prevent unnecessary reloads
+  const loadedTrackRef = useRef<string | null>(null);
+
   useEffect(() => {
     // Watch for track changes trigger
-    // Watch for track changes trigger
-    // We remove AppState.PROCESSING check to allow switching while PLAYING
     if ((appState === AppState.PROCESSING || appState === AppState.PLAYING) && currentTrackIndex !== -1 && playlist[currentTrackIndex]) {
       const track = playlist[currentTrackIndex];
 
+      // Skip if this track is already loaded and playing
+      if (appState === AppState.PLAYING && loadedTrackRef.current === track.id) {
+        console.log('Track already loaded, skipping reload');
+        return;
+      }
+
       const playSequence = async () => {
+        console.log('Loading track:', track.name, 'ID:', track.id);
+
         // 1. Detect BPM and Metadata if needed
         let bpmToUse = track.bpm;
         let sizeToUse = track.size || 0;
@@ -527,21 +538,19 @@ const App: React.FC = () => {
           if (sizeToUse > 0 && (!bitrateToUse || bitrateToUse === 0) && audioEl.duration > 0) {
             bitrateToUse = Math.round((sizeToUse * 8) / audioEl.duration / 1000);
             console.log('Calculated bitrate (from audioEl):', bitrateToUse);
-
-            // We also need sample rate. Audio element doesn't give it directly without Web Audio API context.
-            // But we connect it to context later.
           }
 
           // Update playlist state with all gathered info
           setPlaylist(prev => {
             const copy = [...prev];
-            if (copy[currentTrackIndex]) {
+            const idx = copy.findIndex(t => t.id === track.id);
+            if (idx !== -1) {
               // Only update if something changed
-              const current = copy[currentTrackIndex];
+              const current = copy[idx];
               if (current.bitrate !== bitrateToUse || current.sampleRate !== sampleRateToUse || current.size !== sizeToUse) {
                 console.log('Updating track metadata in state:', { bitrate: bitrateToUse, sampleRate: sampleRateToUse, size: sizeToUse });
-                copy[currentTrackIndex] = {
-                  ...copy[currentTrackIndex],
+                copy[idx] = {
+                  ...copy[idx],
                   bpm: bpmToUse,
                   size: sizeToUse,
                   format: formatToUse,
@@ -592,11 +601,12 @@ const App: React.FC = () => {
           // Trigger a state update if we found new info
           setPlaylist(prev => {
             const copy = [...prev];
-            if (copy[currentTrackIndex]) {
-              const current = copy[currentTrackIndex];
+            const idx = copy.findIndex(t => t.id === track.id);
+            if (idx !== -1) {
+              const current = copy[idx];
               if (current.sampleRate !== sampleRateToUse) {
-                copy[currentTrackIndex] = {
-                  ...copy[currentTrackIndex],
+                copy[idx] = {
+                  ...copy[idx],
                   sampleRate: sampleRateToUse
                 };
               }
@@ -619,6 +629,7 @@ const App: React.FC = () => {
         try {
           await audioEl.play();
           setIsPlaying(true);
+          loadedTrackRef.current = track.id; // Mark this track as loaded
           if (appState !== AppState.PLAYING) {
             setAppState(AppState.PLAYING);
           }
@@ -704,7 +715,9 @@ const App: React.FC = () => {
       onClick={handleUserInteraction}
     >
       {/* Custom Title Bar */}
-      {window.ipcRenderer && <TitleBar />}
+      {window.ipcRenderer && <TitleBar onSettingsClick={() => setIsSettingsOpen(true)} />}
+
+      <Settings isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
       <RainCanvas
         analysis={analysis}

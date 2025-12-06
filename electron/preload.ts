@@ -30,7 +30,10 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
         getFileSize: (path: string) => ipcRenderer.invoke('get-file-size', path),
         getPlaylists: () => ipcRenderer.invoke('get-playlists'),
         createPlaylist: (name: string) => ipcRenderer.invoke('create-playlist', name),
-        deletePlaylist: (name: string) => ipcRenderer.invoke('delete-playlist', name)
+        deletePlaylist: (name: string) => ipcRenderer.invoke('delete-playlist', name),
+        getMusicPath: () => ipcRenderer.invoke('get-music-path'),
+        selectMusicPath: () => ipcRenderer.invoke('select-music-path'),
+        updateMusicPath: (newPath: string) => ipcRenderer.invoke('update-music-path', newPath)
     },
 
     windowControls: {
